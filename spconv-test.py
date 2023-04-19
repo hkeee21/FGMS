@@ -43,6 +43,11 @@ if __name__ == '__main__':
     parser.add_argument('--precision', type=str, default='fp32')
     parser.add_argument('--fusion', default=False, action='store_true')
     args = parser.parse_args()
+
+    device_capability = torch.cuda.get_device_capability()
+    device_capability = device_capability[0] * 100 + device_capability[1] * 10
+    arch80 = device_capability >= 800
+
     root = './sample-data'
     dir = os.path.join(root, args.precision.lower(), args.benchmark.lower())
     file_list = os.listdir(dir)
@@ -90,13 +95,13 @@ if __name__ == '__main__':
                 for _ in range(10):
                     fgms_fwd_cuda(
                         dev_feats, dev_weights, sum_nnz, dev_output, knnz.cpu(), dev_kpos, 
-                        dev_imap, dev_omap, separate_mid, True)
+                        dev_imap, dev_omap, separate_mid, arch80)
                 torch.cuda.synchronize()
                 st = time.time()
                 for i in range(100):
                     fgms_fwd_cuda(
                         dev_feats, dev_weights, sum_nnz, dev_output, knnz.cpu(), dev_kpos, 
-                        dev_imap, dev_omap, separate_mid, True)
+                        dev_imap, dev_omap, separate_mid, arch80)
                 torch.cuda.synchronize()
                 ed = time.time()
 
@@ -106,13 +111,13 @@ if __name__ == '__main__':
                 for _ in range(10):
                     fgms_fusion_fwd_cuda(
                         dev_feats, dev_weights, qsum_nnz, dev_output, dev_kpos, dev_qkpos, 
-                        dev_imap, dev_omap, separate_mid, True)
+                        dev_imap, dev_omap, separate_mid, arch80)
                 torch.cuda.synchronize()
                 st = time.time()
                 for i in range(100):
                     fgms_fusion_fwd_cuda(
                         dev_feats, dev_weights, qsum_nnz, dev_output, dev_kpos, dev_qkpos, 
-                        dev_imap, dev_omap, separate_mid, True)
+                        dev_imap, dev_omap, separate_mid, arch80)
                 torch.cuda.synchronize()
                 ed = time.time()
         

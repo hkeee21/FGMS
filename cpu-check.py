@@ -71,6 +71,11 @@ if __name__ == '__main__':
     parser.add_argument('--out-channel', type=int, default=16)
     parser.add_argument('--fusion', default=False, action='store_true')
     args = parser.parse_args()
+
+    device_capability = torch.cuda.get_device_capability()
+    device_capability = device_capability[0] * 100 + device_capability[1] * 10
+    arch80 = device_capability >= 800
+
     dir = './sample-data/tiny-samples'
     file_list = os.listdir(dir)
     for i, file in enumerate(file_list):
@@ -104,11 +109,11 @@ if __name__ == '__main__':
             if not args.fusion:
                 fgms_fwd_cuda(
                     dev_feats, dev_weights, sum_nnz, dev_output, knnz.cpu(), dev_kpos, 
-                    dev_imap, dev_omap, separate_mid, True)
+                    dev_imap, dev_omap, separate_mid, arch80)
             else:
                 fgms_fusion_fwd_cuda(
                     dev_feats, dev_weights, qsum_nnz, dev_output, dev_kpos, dev_qkpos, 
-                    dev_imap, dev_omap, separate_mid, True)
+                    dev_imap, dev_omap, separate_mid, arch80)
         
         output = dev_output.clone().cpu()
         out_sum = out_nnz * out_channel
