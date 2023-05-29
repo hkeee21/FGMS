@@ -1,5 +1,6 @@
 #include "spconv.h"
 #include "spconv.cuh"
+#include "conv_back.cuh"
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -366,4 +367,64 @@ void ConvolutionForward(const at::Tensor in_feats,
         CUBLAS_GEMM_DEFAULT_TENSOR_OP);
     }
   }
+}
+
+
+void ConvolutionBackward(const at::Tensor out_feats_grad, 
+                        const at::Tensor in_feats, 
+                        const at::Tensor kernel, 
+                        const int sum_nnz, 
+                        at::Tensor in_feats_grad, 
+                        at::Tensor kernel_grad, 
+                        const at::Tensor kpos,
+                        const at::Tensor qkpos, 
+                        const at::Tensor in_map, 
+                        const at::Tensor out_map, 
+                        const bool separate_mid,
+                        const bool arch80
+                        ){
+  
+  int innz = in_feats.size(0);
+  int onnz = out_feats_grad.size(0);
+  int in_channel = in_feats.size(1);
+  if (in_feats.size(1) != kernel.size(1)) {
+    throw std::invalid_argument(
+      "Input feature size and kernel size mismatch"
+    );
+  }
+  int out_channel = kernel.size(2);
+  int k_vol = kernel.size(0);
+
+  bool data_type_half = 
+    in_feats.scalar_type() == at::ScalarType::Half;
+
+  int *in_map_ptr = in_map.data_ptr<int>();
+  int *out_map_ptr = out_map.data_ptr<int>();
+
+  int *kpos_ptr = kpos.data_ptr<int>();
+  int *qkpos_ptr = qkpos.data_ptr<int>();
+
+  int mid_weight_id = (k_vol % 2 == 1) ? k_vol / 2 : 0;
+
+  // loop over all kernel offsets: 
+  // W^T X {\delta{out_feats}} = {\delta{in_feats}}^T
+  // {\delta{out_feats}}^T X in_feats = {\delta{W}}^T
+  // {\delta{out_feats}} X W^T = {\delta{in_feats}}
+  _fgms_fusion_tf32_W_transpose<32, 4, 8, 16, 8, 16, 4, 2, 2>
+              <<<dim3(DIV_UP(in_channel, 32), DIV_UP(sum_nnz, 128), 1), dim3(8, 32, 1)>>>(
+                kpos_ptr, qkpos_ptr, k_vol, in_channel, out_channel, 
+                out_feats_grad.data_ptr<float>(), 
+                kernel.data_ptr<float>(), 
+                in_feats_grad.data_ptr<float>(), 
+                out_map_ptr, in_map_ptr
+          );
+  // in_feats^T X {\delta{out_feats}} = {\delta{W}}
+  _fgms_fusion_tf32_I_transpose<32, 8, 8, 16, 8, 16, 2, 2, 1>
+              <<<dim3(DIV_UP(sum_nnz, 128)), dim3(8, 16, 1)>>>(
+                kpos_ptr, qkpos_ptr, k_vol, in_channel, out_channel, 
+                in_feats.data_ptr<float>(), 
+                out_feats_grad.data_ptr<float>(),
+                kernel_grad.data_ptr<float>(),
+                in_map_ptr, out_map_ptr
+          );
 }

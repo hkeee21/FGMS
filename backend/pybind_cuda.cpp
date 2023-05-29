@@ -7,4 +7,5 @@
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m){
   m.def("fgms_fusion_fwd_cuda", &ConvolutionForwardFused);
   m.def("fgms_fwd_cuda", &ConvolutionForward);
+  m.def("fgms_bwd_cuda", &ConvolutionBackward);
 }
