@@ -7,7 +7,7 @@ sources = [os.path.join('backend', f'pybind_cuda.cpp'),
 
 setup(
     name='FGMS',
-    version='1.2',
+    version='1.3',
     ext_modules=[
         CUDAExtension('FGMS.backend',
             sources=sources,
