@@ -418,14 +418,22 @@ void ConvolutionBackward(const at::Tensor out_feats_grad,
                 reinterpret_cast<half *>(in_feats_grad.data_ptr<at::Half>()), 
                 out_map_ptr, in_map_ptr
           );
-    _fgms_fusion_fp16_I_transpose<32, 8, 8, 16, 16, 16, 2, 2, 1>
-              <<<dim3(DIV_UP(sum_nnz, 256)), dim3(4, 32, 1)>>>(
-                kpos_ptr, qkpos_ptr, k_vol, in_channel, out_channel, 
-                reinterpret_cast<half *>(in_feats.data_ptr<at::Half>()), 
-                reinterpret_cast<half *>(out_feats_grad.data_ptr<at::Half>()),
-                reinterpret_cast<half *>(kernel_grad.data_ptr<at::Half>()),
-                in_map_ptr, out_map_ptr
-          );
+    // _fgms_fusion_fp16_I_transpose<32, 8, 8, 16, 16, 16, 2, 2, 1>
+    //           <<<dim3(DIV_UP(sum_nnz, 256)), dim3(4, 32, 1)>>>(
+    //             kpos_ptr, qkpos_ptr, k_vol, in_channel, out_channel, 
+    //             reinterpret_cast<half *>(in_feats.data_ptr<at::Half>()), 
+    //             reinterpret_cast<half *>(out_feats_grad.data_ptr<at::Half>()),
+    //             reinterpret_cast<half *>(kernel_grad.data_ptr<at::Half>()),
+    //             in_map_ptr, out_map_ptr
+    //       );
+    _fgms_fusion_fp16_I_transpose_v3<32, 128, 1, 8, 16, 16, 16, 2, 2, 4>
+             <<<dim3(DIV_UP(sum_nnz, 128)), dim3(4, 128, 1)>>>(
+               kpos_ptr, qkpos_ptr, k_vol, in_channel, out_channel, 
+               reinterpret_cast<half *>(in_feats.data_ptr<at::Half>()), 
+               reinterpret_cast<half *>(out_feats_grad.data_ptr<at::Half>()),
+               reinterpret_cast<half *>(kernel_grad.data_ptr<at::Half>()),
+               in_map_ptr, out_map_ptr
+         );
   }
   else{
     // {\delta{out_feats}} X W^T = {\delta{in_feats}}
