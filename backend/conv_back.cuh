@@ -155,10 +155,12 @@ __global__ void _fgms_fusion_tf32_W_transpose(
     int y_temp = y + n * BLOCK_SIZE;
     int out_row = y_temp < __ldg(&kpos[widx + 1]) ? omap[y_temp] : -1;
     if (out_row > -1 && cx < c_in){
-#pragma unroll
-      for (int c = 0; c < 4; c++){
-        atomicAdd(&in_f_grad[c_in * out_row + cx + c], As[n][ty][ctx + c]);
-      }
+// #pragma unroll
+//       for (int c = 0; c < 4; c++){
+//         atomicAdd(&in_f_grad[c_in * out_row + cx + c], As[n][ty][ctx + c]);
+// }
+      atomicAdd(((float4*)(&in_f_grad[c_in * out_row + ctx])), 
+        *((float4*)(&As[n][ty][ctx])));
     }
   }
 #endif
@@ -396,10 +398,12 @@ __global__ void _fgms_fusion_tf32_I_transpose(
       __syncthreads();
 #pragma unroll
       for (int y = 0; y < 2; y++){
-        for (int c = 0; c < 4; c++){
-          atomicAdd(wg_ptr + (m + y * M + ty) * c_out + (n + cx) + c, 
-            Cs[y * M + ty][ctx + c]);
-        }
+//         for (int c = 0; c < 4; c++){
+//           atomicAdd(wg_ptr + (m + y * M + ty) * c_out + (n + cx) + c, 
+//             Cs[y * M + ty][ctx + c]);
+//        }
+          atomicAdd(((float4*)(wg_ptr + (m + y * M + ty) * c_out + (n + cx))),
+            *((float4*)(&Cs[y * M + ty][ctx])));
       }
     }
   }
