@@ -363,6 +363,7 @@ __global__ void _fgms_fusion_fp16_W_transpose_v2(
   __syncthreads();
 
   // Loop over all the sub-matrices of A and B
+#pragma unroll
   for (int _k = 0; _k < c_out; _k += BLOCK_SIZE) {
     int b_load_x = ty / 4;
     int b_load_y = ty % 4 * 8 + ctx_b;
@@ -373,6 +374,7 @@ __global__ void _fgms_fusion_fp16_W_transpose_v2(
       *((half2*)(&padding[0]));
     
     // Input feature to As
+#pragma unroll
     for (int _n = 0; _n < EX_LOOP; _n++){
 
       int y_temp = y + _n * IM_LOOP * BLOCK_SIZE;
