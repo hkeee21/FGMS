@@ -1,6 +1,7 @@
 #include "spconv.h"
 #include "spconv.cuh"
 #include "conv_back.cuh"
+#include "fwd_kernels.cuh"
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -118,13 +119,21 @@ void ConvolutionForwardFused(
       }
       else{
         if (arch80){
-          _fgms_fusion_fp16_tc4_async<32, 4, 8, 16, 16, 16, 4, 2, 2>
-              <<<dim3(DIV_UP(out_channel, 32), DIV_UP(sum_nnz, 128), 1), dim3(8, 32, 1)>>>(
-              kpos.data_ptr<int>(), qkpos.data_ptr<int>(), k_vol, in_channel, out_channel, 
-              reinterpret_cast<half *>(in_feats.data_ptr<at::Half>()),
-              reinterpret_cast<half *>(kernel.data_ptr<at::Half>()),
-              reinterpret_cast<half *>(out_feats.data_ptr<at::Half>()),
-              in_map_ptr, out_map_ptr
+          // _fgms_fusion_fp16_tc4_async<32, 4, 8, 16, 16, 16, 4, 2, 2>
+          //     <<<dim3(DIV_UP(out_channel, 32), DIV_UP(sum_nnz, 128), 1), dim3(8, 32, 1)>>>(
+          //     kpos.data_ptr<int>(), qkpos.data_ptr<int>(), k_vol, in_channel, out_channel, 
+          //     reinterpret_cast<half *>(in_feats.data_ptr<at::Half>()),
+          //     reinterpret_cast<half *>(kernel.data_ptr<at::Half>()),
+          //     reinterpret_cast<half *>(out_feats.data_ptr<at::Half>()),
+          //     in_map_ptr, out_map_ptr
+          // );
+          _fgms_fusion_fp16_v2<32, 2, 4, 8, 16, 16, 16, 8, 2, 1>
+              <<<dim3(DIV_UP(out_channel, 32), DIV_UP(sum_nnz, 256), 1), dim3(4, 128, 1)>>>(
+                kpos.data_ptr<int>(), qkpos.data_ptr<int>(), k_vol, in_channel, out_channel, 
+                reinterpret_cast<half *>(in_feats.data_ptr<at::Half>()), 
+                reinterpret_cast<half *>(kernel.data_ptr<at::Half>()), 
+                reinterpret_cast<half *>(out_feats.data_ptr<at::Half>()), 
+                in_map_ptr, out_map_ptr
           );
         }
         else{

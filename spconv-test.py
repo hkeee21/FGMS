@@ -83,11 +83,11 @@ if __name__ == '__main__':
 
         if separate_mid:
             dev_qkpos, qsum_nnz, dev_kpos, dev_imap, dev_omap = remove_mid(
-                in_nnz, knnz, dev_kpos, dev_weights.shape[0], 128, dev_imap, dev_omap
+                in_nnz, knnz, dev_kpos, dev_weights.shape[0], 256, dev_imap, dev_omap
             )
             separate_mid = False
         else:
-            dev_qkpos, qsum_nnz = kpos_quantized(knnz, dev_kpos, dev_weights.shape[0], 128)
+            dev_qkpos, qsum_nnz = kpos_quantized(knnz, dev_kpos, dev_weights.shape[0], 256)
         
         if not args.fusion:
             # print('seq!')

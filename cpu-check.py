@@ -103,7 +103,7 @@ if __name__ == '__main__':
             dtype=dev_feats.dtype, device=dev_feats.device)
 
         dev_qkpos, qsum_nnz = \
-            kpos_quantized(knnz, dev_kpos, dev_weights.shape[0], 128)
+            kpos_quantized(knnz, dev_kpos, dev_weights.shape[0], 256)
         
         with torch.no_grad(): 
             if not args.fusion:

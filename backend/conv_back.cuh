@@ -2,33 +2,7 @@
 #include <cuda.h>
 #include <mma.h>
 #include <cuda/pipeline>
-
-/*******************************************************************
-device functions
-*/
-__device__ __forceinline__ int binary_search_back(
-                            const int *S_csrRowPtr, const int eid, 
-                            const int start, const int end) {
-    
-    int lo = start, hi = end;
-    if (lo == hi){
-        return lo;
-    }
-    while (lo < hi) {
-        int mid = (lo + hi) >> 1;
-        if (__ldg(S_csrRowPtr + mid) <= eid) {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-    if (__ldg(S_csrRowPtr + hi) <= eid) {
-        return hi;
-    } else {
-        return hi - 1;
-    }
-}
-
+#include "utils.cuh"
 
 using namespace nvcuda;
 /*
@@ -67,7 +41,7 @@ __global__ void _fgms_fusion_tf32_W_transpose(
   const int warp_col = warpId % NS; // 0, 1
 
   // Weight index
-  const int widx = binary_search_back(qkpos, by * N_LOOP * BLOCK_SIZE, 0, k_vol);
+  const int widx = binary_search(qkpos, by * N_LOOP * BLOCK_SIZE, 0, k_vol);
   const float *kw_ptr = &kw[widx * c_in * c_out];
   
   // Coordinate. x is for rows, y is for columns.
@@ -204,7 +178,7 @@ __global__ void _fgms_fusion_fp16_W_transpose(
   const int warp_col = warpId % NS; // 0, 1
 
   // Weight index
-  const int widx = binary_search_back(qkpos, by * N_LOOP * BLOCK_SIZE, 0, k_vol);
+  const int widx = binary_search(qkpos, by * N_LOOP * BLOCK_SIZE, 0, k_vol);
   const half *kw_ptr = &kw[widx * c_in * c_out];
   
   // Coordinate. x is for rows, y is for columns.
@@ -336,7 +310,7 @@ __global__ void _fgms_fusion_fp16_W_transpose_v2(
   const int warp_col = warpId % NS; // 0, 1
 
   // Weight index
-  const int widx = binary_search_back(
+  const int widx = binary_search(
     qkpos, by * EX_LOOP * IM_LOOP * BLOCK_SIZE, 0, k_vol);
   const half *kw_ptr = &kw[widx * c_in * c_out];
   

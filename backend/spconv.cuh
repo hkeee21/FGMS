@@ -2,37 +2,12 @@
 #include <cuda.h>
 #include <mma.h>
 #include <cuda/pipeline>
+#include "utils.cuh"
 
 #define DIV_UP(x, y) ((x) + (y) - 1) / (y)
 #define _FLOAT4(pointer) (reinterpret_cast<float4 *>(&(pointer))[0])
 #define _FLOAT2(pointer) (reinterpret_cast<float2 *>(&(pointer))[0])
 #define _HALF2(pointer) (reinterpret_cast<half2 *>(&(pointer))[0])
-
-/*******************************************************************
-device functions
-*/
-__device__ __forceinline__ int binary_search(
-                            const int *S_csrRowPtr, const int eid, 
-                            const int start, const int end) {
-    
-    int lo = start, hi = end;
-    if (lo == hi){
-        return lo;
-    }
-    while (lo < hi) {
-        int mid = (lo + hi) >> 1;
-        if (__ldg(S_csrRowPtr + mid) <= eid) {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-    if (__ldg(S_csrRowPtr + hi) <= eid) {
-        return hi;
-    } else {
-        return hi - 1;
-    }
-}
 
 /*
 BLOCK_SIZE = 16, N_LOOP = 8, SKEW = 8, 
