@@ -1,6 +1,6 @@
 #include "spconv.h"
 #include "spconv.cuh"
-#include "conv_back.cuh"
+#include "bwd_kernels.cuh"
 #include "fwd_kernels.cuh"
 
 #include <ATen/ATen.h>
@@ -451,7 +451,7 @@ void ConvolutionBackward(const at::Tensor out_feats_grad,
     //           reinterpret_cast<half *>(kernel_grad.data_ptr<at::Half>()),
     //           in_map_ptr, out_map_ptr
     //     );
-    _fgms_fusion_fp16_I_transpose_v4<32, 128, 2, 8, 16, 16, 16, 2, 2, 4>
+    _fgms_fusion_fp16_I_transpose_v5<32, 128, 2, 8, 16, 16, 16, 2, 2, 4>
            <<<dim3(DIV_UP(sum_nnz, 256)), dim3(4, 128, 1)>>>(
              kpos_ptr, qkpos_ptr, k_vol, in_channel, out_channel, 
               reinterpret_cast<half *>(in_feats.data_ptr<at::Half>()), 
