@@ -339,12 +339,13 @@ __global__ void _fgms_fusion_fp16_W_transpose_v2(
   // Loop over all the sub-matrices of A and B
 #pragma unroll
   for (int _k = 0; _k < c_out; _k += BLOCK_SIZE) {
-    int b_load_x = ty / 4;
+    int b_load_x_local = ty / 4;
+    int b_load_x_global = ty / 4 + BLOCK_SIZE * bx;
     int b_load_y = ty % 4 * 8 + ctx_b;
     // Kernel weight to Bs
-    *((half2*)(&Bs[b_load_x][b_load_y])) = 
-      (b_load_x < c_in && (_k + b_load_y) < c_out) ? 
-      *((half2*)(kw_ptr + c_out * b_load_x + _k + b_load_y)) : 
+    *((half2*)(&Bs[b_load_x_local][b_load_y])) = 
+      (b_load_x_global < c_in && (_k + b_load_y) < c_out) ? 
+      *((half2*)(kw_ptr + c_out * b_load_x_global + _k + b_load_y)) : 
       *((half2*)(&padding[0]));
     
     // Input feature to As

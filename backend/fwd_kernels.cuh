@@ -51,7 +51,8 @@ __global__ void _fgms_fusion_fp16_v2(
   const half *kw_ptr = &kw[widx * c_in * c_out];
   
   // Coordinate. x is for rows, y is for columns.
-  const int cx = BLOCK_SIZE * bx + ctx_a;
+  const int cx_a = BLOCK_SIZE * bx + ctx_a;
+  const int cx_b = BLOCK_SIZE * bx + ctx_b;
   const int y = BLOCK_SIZE * EX_LOOP * IM_LOOP * by + ty 
     - __ldg(&qkpos[widx]) + __ldg(&kpos[widx]);
 
@@ -76,11 +77,12 @@ __global__ void _fgms_fusion_fp16_v2(
 #pragma unroll
   for (int _k = 0; _k < c_in; _k += BLOCK_SIZE) {
     int b_load_x = ty / 4;
-    int b_load_y = ty % 4 * 8 + ctx_b;
+    int b_load_y_local = ty % 4 * 8 + ctx_b;
+    int b_load_y_global = ty % 4 * 8 + cx_b;
     // Kernel weight to Bs
-    *((half2*)(&Bs[b_load_x][b_load_y])) = 
-      ((_k + b_load_x) < c_in && b_load_y < c_out) ? 
-      *((half2*)(kw_ptr + c_out * b_load_x + _k + b_load_y)) : 
+    *((half2*)(&Bs[b_load_x][b_load_y_local])) = 
+      ((_k + b_load_x) < c_in && b_load_y_global < c_out) ? 
+      *((half2*)(kw_ptr + c_out * (b_load_x + _k) + b_load_y_global)) : 
       *((half2*)(&padding[0]));
     
     // Input feature to As
@@ -130,15 +132,13 @@ __global__ void _fgms_fusion_fp16_v2(
   for (int n = 0; n < EX_LOOP; n++){
     int y_temp = y + n * IM_LOOP * BLOCK_SIZE;
     int out_row = y_temp < __ldg(&kpos[widx + 1]) ? omap[y_temp] : -1;
-    if (out_row > -1 && cx < c_out){
+    if (out_row > -1 && cx_a < c_out){
 #pragma unroll
       for (int _c = 0; _c < 8; _c += 2){
-        atomicAdd(((half2*)(&out_f[c_out * out_row + cx + _c])), 
+        atomicAdd(((half2*)(&out_f[c_out * out_row + cx_a + _c])), 
           *((half2*)(&As[n][ty][ctx_a + _c])));
       }
     }
   }
 #endif
 }
-
-
