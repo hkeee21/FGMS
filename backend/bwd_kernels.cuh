@@ -397,7 +397,8 @@ __global__ void _fgms_fusion_fp16_W_transpose_v2(
     int out_row = y_temp < __ldg(&kpos[widx + 1]) ? omap[y_temp] : -1;
     if (out_row > -1 && cx < c_in){
 #pragma unroll
-      for (int _c = 0; _c < 8; _c += 2){
+      for (int _c = 0; _c + cx < c_in; _c += 2){
+      // for (int _c = 0; _c < 8; _c += 2){
         atomicAdd(((half2*)(&in_f_grad[c_in * out_row + cx + _c])), 
           *((half2*)(&As[n][ty][ctx_a + _c])));
       }
@@ -1095,3 +1096,267 @@ __global__ void _fgms_fusion_fp16_I_transpose_v5(
   }
 #endif
 }
+
+
+/*
+BLOCK_SIZE_X = 32, 
+BLOCK_SIZE_Y = 128, 
+EX_LOOP = 2, SKEW = 8, 
+M = 16, K = 16, N = 16, 
+MS = BLOCK_SIZE_X / M = 2, 
+NS = BLOCK_SIZE_X / N = 2, 
+KS = warpNum / MS / NS = 4,
+blockDim.x = 4, blockDim.y = 128
+*/
+template <int BLOCK_SIZE_X, int BLOCK_SIZE_Y, int EX_LOOP, int SKEW, 
+  int M, int K, int N, int MS, int NS, int KS>
+__global__ void _fgms_fusion_fp16_I_transpose_v5_4x(
+                const int *__restrict__ kpos,
+                const int *__restrict__ qkpos, 
+                const int k_vol, 
+                const int c_in,
+                const int c_out,
+                const half *__restrict__ in_f, 
+                const half *__restrict__ out_g, 
+                half *w_g,
+                const int *imap, 
+                const int *omap) {
+#if __CUDA_ARCH__ >= 700
+  // Block index
+  const int bx = blockIdx.x;
+  // const int by = blockIdx.y;
+
+  // Thread index
+  const int tx = threadIdx.x;
+  const int ty = threadIdx.y;
+  const int ctx = tx << 3;
+  const int sx = ty % 4 * 8 + tx * 2;
+  const int sy = ty / 4;
+  // const int ctx2 = tx << 1;
+  const int tid = ty * blockDim.x + tx;
+
+  // Warp index
+  const int warpNum = blockDim.x * blockDim.y / 32;
+  const int warpId = tid / 32;
+  const int laneId = tid % 32;
+  const int warp_k = warpId / (MS * NS);  // 0, 1, 2, 3
+  const int warp_m = warpId % (MS * NS) / NS; // 0, 1
+  const int warp_km = warpId / NS;        // 0, 1, 2, 3, 4, 5, 6, 7
+  const int warp_n = warpId % (MS * NS) % NS; // 0, 1
+
+  // Weight index
+  const int widx = binary_search(qkpos, bx * EX_LOOP * BLOCK_SIZE_Y, 0, k_vol);
+  half *wg_ptr = &w_g[widx * c_in * c_out];
+  
+  // Coordinate. x is for rows, y is for columns.
+  // const int cx = ctx;
+  const int y = BLOCK_SIZE_Y * EX_LOOP * bx + ty 
+    - __ldg(&qkpos[widx]) + __ldg(&kpos[widx]);
+
+  half padding[8] = {__float2half(0.0f)};
+
+  // Declaration of the shared memory array As and Bs
+  // TODO: wonder if KLOOP can be reduced
+  // TODO: BLOCK_SIZE of different dim can be different
+  __shared__ half As[BLOCK_SIZE_Y][BLOCK_SIZE_X + SKEW];
+  __shared__ half Bs[BLOCK_SIZE_Y][BLOCK_SIZE_X + SKEW];
+  // __shared__ half Cs[KS][BLOCK_SIZE_X][BLOCK_SIZE_X + SKEW];
+
+  // Fragments to store As, Bs and Cs
+  wmma::fragment<wmma::accumulator, M, N, K, half> c;
+  wmma::fragment<wmma::matrix_a, M, N, K, half, wmma::col_major> a;
+  wmma::fragment<wmma::matrix_b, M, N, K, half, wmma::row_major> b;
+
+#pragma unroll
+  for (int m = 0; m < c_in; m += BLOCK_SIZE_X){
+#pragma unroll
+    for (int n = 0; n < c_out; n += BLOCK_SIZE_X){
+      // empty the accumulation space
+      wmma::fill_fragment(c, __float2half(0.0f));
+#pragma unroll
+      for (int k = 0; k < EX_LOOP; k++){
+        int y_temp = y + k * BLOCK_SIZE_Y;
+        int in_row = y_temp < __ldg(&kpos[widx + 1]) ? imap[y_temp] : -1;
+        int out_row = y_temp < __ldg(&kpos[widx + 1]) ? omap[y_temp] : -1;
+
+        if (k > 0){__syncthreads();}
+
+        // *((float4*)(&As[ty][ctx])) = ((m + ctx) < c_in && in_row > -1) ? 
+        //   *((float4*)(&in_f[c_in * in_row + m + ctx])) : 
+        //   *((float4*)(&padding[0]));
+        if (m + ctx + 8 < c_in && in_row > -1){
+          *((float4*)(&As[ty][ctx])) = *((float4*)(&in_f[c_in * in_row + m + ctx]));
+        }
+        else if ((m + ctx) < c_in && in_row > -1){
+          *((float2*)(&As[ty][ctx])) = *((float2*)(&in_f[c_in * in_row + m + ctx]));
+          *((float2*)(&As[ty][ctx + 4])) = *((float2*)(&padding[0]));
+        }
+        else{
+          *((float4*)(&As[ty][ctx])) = *((float4*)(&padding[0]));
+        }
+        
+        *((float4*)(&Bs[ty][ctx])) = ((n + ctx) < c_out && out_row > -1) ? 
+          *((float4*)(&out_g[c_out * out_row + n + ctx])) : 
+          *((float4*)(&padding[0]));
+      // }
+        __syncthreads();
+// #pragma unroll     
+      // for (int _k = 0; _k < EX_LOOP; _k++){
+        wmma::load_matrix_sync(a, &As[warp_k * K][warp_m * M], BLOCK_SIZE_X + SKEW);
+        wmma::load_matrix_sync(b, &Bs[warp_k * K][warp_n * N], BLOCK_SIZE_X + SKEW);
+        wmma::mma_sync(c, a, b, c); 
+        wmma::load_matrix_sync(a, &As[(warp_k + KS) * K][warp_m * M], BLOCK_SIZE_X + SKEW);
+        wmma::load_matrix_sync(b, &Bs[(warp_k + KS) * K][warp_n * N], BLOCK_SIZE_X + SKEW);
+        wmma::mma_sync(c, a, b, c); 
+      }
+      wmma::store_matrix_sync(&As[warp_km * M][warp_n * N], 
+        c, BLOCK_SIZE_X + SKEW, wmma::mem_row_major);
+      // make sure all the partial sums are stored into shared memory
+      __syncthreads();
+      half2 to_store = *((half2*)(&As[sy][sx]));
+#pragma unroll
+      for (int _t = 1; _t < KS; _t++){
+        to_store = __hadd2(to_store, *((half2*)(&As[_t * BLOCK_SIZE_X + sy][sx])));
+      }
+      atomicAdd(((half2*)(wg_ptr + (m + sy) * c_out + (n + sx))), 
+        to_store);
+    }
+  }
+#endif
+}
+
+
+/*
+BLOCK_SIZE_X = 32, 
+BLOCK_SIZE_Y = 128, 
+EX_LOOP = 2, SKEW = 8, 
+M = 16, K = 16, N = 16, 
+MS = BLOCK_SIZE_X / M = 2, 
+NS = BLOCK_SIZE_X / N = 2, 
+KS = warpNum / MS / NS = 4,
+blockDim.x = 4, blockDim.y = 128
+*/
+template <int BLOCK_SIZE_X, int BLOCK_SIZE_Y, int EX_LOOP, int SKEW, 
+  int M, int K, int N, int MS, int NS, int KS>
+__global__ void _fgms_fusion_fp16_I_transpose_v5_2x(
+                const int *__restrict__ kpos,
+                const int *__restrict__ qkpos, 
+                const int k_vol, 
+                const int c_in,
+                const int c_out,
+                const half *__restrict__ in_f, 
+                const half *__restrict__ out_g, 
+                half *w_g,
+                const int *imap, 
+                const int *omap) {
+#if __CUDA_ARCH__ >= 700
+  // Block index
+  const int bx = blockIdx.x;
+  // const int by = blockIdx.y;
+
+  // Thread index
+  const int tx = threadIdx.x;
+  const int ty = threadIdx.y;
+  const int ctx = tx << 3;
+  const int sx = ty % 4 * 8 + tx * 2;
+  const int sy = ty / 4;
+  // const int ctx2 = tx << 1;
+  const int tid = ty * blockDim.x + tx;
+
+  // Warp index
+  const int warpNum = blockDim.x * blockDim.y / 32;
+  const int warpId = tid / 32;
+  const int laneId = tid % 32;
+  const int warp_k = warpId / (MS * NS);  // 0, 1, 2, 3
+  const int warp_m = warpId % (MS * NS) / NS; // 0, 1
+  const int warp_km = warpId / NS;        // 0, 1, 2, 3, 4, 5, 6, 7
+  const int warp_n = warpId % (MS * NS) % NS; // 0, 1
+
+  // Weight index
+  const int widx = binary_search(qkpos, bx * EX_LOOP * BLOCK_SIZE_Y, 0, k_vol);
+  half *wg_ptr = &w_g[widx * c_in * c_out];
+  
+  // Coordinate. x is for rows, y is for columns.
+  // const int cx = ctx;
+  const int y = BLOCK_SIZE_Y * EX_LOOP * bx + ty 
+    - __ldg(&qkpos[widx]) + __ldg(&kpos[widx]);
+
+  half padding[8] = {__float2half(0.0f)};
+
+  // Declaration of the shared memory array As and Bs
+  // TODO: wonder if KLOOP can be reduced
+  // TODO: BLOCK_SIZE of different dim can be different
+  __shared__ half As[BLOCK_SIZE_Y][BLOCK_SIZE_X + SKEW];
+  __shared__ half Bs[BLOCK_SIZE_Y][BLOCK_SIZE_X + SKEW];
+  // __shared__ half Cs[KS][BLOCK_SIZE_X][BLOCK_SIZE_X + SKEW];
+
+  // Fragments to store As, Bs and Cs
+  wmma::fragment<wmma::accumulator, M, N, K, half> c;
+  wmma::fragment<wmma::matrix_a, M, N, K, half, wmma::col_major> a;
+  wmma::fragment<wmma::matrix_b, M, N, K, half, wmma::row_major> b;
+
+#pragma unroll
+  for (int m = 0; m < c_in; m += BLOCK_SIZE_X){
+#pragma unroll
+    for (int n = 0; n < c_out; n += BLOCK_SIZE_X){
+      // empty the accumulation space
+      wmma::fill_fragment(c, __float2half(0.0f));
+#pragma unroll
+      for (int k = 0; k < EX_LOOP; k++){
+        int y_temp = y + k * BLOCK_SIZE_Y;
+        int in_row = y_temp < __ldg(&kpos[widx + 1]) ? imap[y_temp] : -1;
+        int out_row = y_temp < __ldg(&kpos[widx + 1]) ? omap[y_temp] : -1;
+
+        if (k > 0){__syncthreads();}
+
+        // *((float4*)(&As[ty][ctx])) = ((m + ctx) < c_in && in_row > -1) ? 
+        //   *((float4*)(&in_f[c_in * in_row + m + ctx])) : 
+        //   *((float4*)(&padding[0]));
+        if (m + ctx + 8 < c_in && in_row > -1){
+          *((float4*)(&As[ty][ctx])) = *((float4*)(&in_f[c_in * in_row + m + ctx]));
+        }
+        else if ((m + ctx) < c_in && in_row > -1){
+          // *((float*)(&As[ty][ctx])) = *((float*)(&in_f[c_in * in_row + m + ctx]));
+        # pragma unroll
+          for (int _c = 0; _c < 8; _c += 2){
+            *((half2*)(&As[ty][ctx + _c])) = _c + m + ctx < c_in ?
+              *((half2*)(&in_f[c_in * in_row + m + ctx + _c])) :
+              *((half2*)(&padding[0]));
+          }
+        }
+        else{
+          *((float4*)(&As[ty][ctx])) = *((float4*)(&padding[0]));
+        }
+        
+        *((float4*)(&Bs[ty][ctx])) = ((n + ctx) < c_out && out_row > -1) ? 
+          *((float4*)(&out_g[c_out * out_row + n + ctx])) : 
+          *((float4*)(&padding[0]));
+      // }
+        __syncthreads();
+// #pragma unroll     
+      // for (int _k = 0; _k < EX_LOOP; _k++){
+        wmma::load_matrix_sync(a, &As[warp_k * K][warp_m * M], BLOCK_SIZE_X + SKEW);
+        wmma::load_matrix_sync(b, &Bs[warp_k * K][warp_n * N], BLOCK_SIZE_X + SKEW);
+        wmma::mma_sync(c, a, b, c); 
+        wmma::load_matrix_sync(a, &As[(warp_k + KS) * K][warp_m * M], BLOCK_SIZE_X + SKEW);
+        wmma::load_matrix_sync(b, &Bs[(warp_k + KS) * K][warp_n * N], BLOCK_SIZE_X + SKEW);
+        wmma::mma_sync(c, a, b, c); 
+      }
+      wmma::store_matrix_sync(&As[warp_km * M][warp_n * N], 
+        c, BLOCK_SIZE_X + SKEW, wmma::mem_row_major);
+      // make sure all the partial sums are stored into shared memory
+      __syncthreads();
+      half2 to_store = *((half2*)(&As[sy][sx]));
+#pragma unroll
+      for (int _t = 1; _t < KS; _t++){
+        to_store = __hadd2(to_store, *((half2*)(&As[_t * BLOCK_SIZE_X + sy][sx])));
+      }
+      if (m + sy < c_in){
+        atomicAdd(((half2*)(wg_ptr + (m + sy) * c_out + (n + sx))), 
+          to_store);
+      }
+    }
+  }
+#endif
+}
+

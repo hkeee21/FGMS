@@ -127,14 +127,46 @@ void ConvolutionForwardFused(
           //     reinterpret_cast<half *>(out_feats.data_ptr<at::Half>()),
           //     in_map_ptr, out_map_ptr
           // );
-          _fgms_fusion_fp16_v2<32, 2, 4, 8, 16, 16, 16, 8, 2, 1>
+          // if (in_channel > 256 || out_channel > 256){
+          //   _fgms_fusion_fp16_v2<32, 2, 4, 8, 16, 16, 16, 8, 2, 1>
+          //     <<<dim3(DIV_UP(out_channel, 32), DIV_UP(sum_nnz, 256), 1), dim3(4, 128, 1)>>>(
+          //       kpos.data_ptr<int>(), qkpos.data_ptr<int>(), k_vol, in_channel, out_channel, 
+          //       reinterpret_cast<half *>(in_feats.data_ptr<at::Half>()), 
+          //       reinterpret_cast<half *>(kernel.data_ptr<at::Half>()), 
+          //       reinterpret_cast<half *>(out_feats.data_ptr<at::Half>()), 
+          //       in_map_ptr, out_map_ptr
+          //   );
+          // }
+          // else{
+          //   _fgms_fusion_fp16_v3<32, 2, 4, 8, 16, 16, 16, 8, 2, 1>
+          //     <<<dim3(1, DIV_UP(sum_nnz, 256), 1), dim3(4, 128, 1)>>>(
+          //       kpos.data_ptr<int>(), qkpos.data_ptr<int>(), k_vol, in_channel, out_channel, 
+          //       reinterpret_cast<half *>(in_feats.data_ptr<at::Half>()), 
+          //       reinterpret_cast<half *>(kernel.data_ptr<at::Half>()), 
+          //       reinterpret_cast<half *>(out_feats.data_ptr<at::Half>()), 
+          //       in_map_ptr, out_map_ptr
+          //   );
+          // }
+          if (out_channel == 64){
+              _fgms_fusion_fp16_v4<32, 2, 2, 2, 8, 16, 16, 16, 4, 4, 1>
+              <<<dim3(DIV_UP(out_channel, 64), DIV_UP(sum_nnz, 128), 1), dim3(4, 64, 2)>>>(
+                kpos.data_ptr<int>(), qkpos.data_ptr<int>(), k_vol, in_channel, out_channel, 
+                reinterpret_cast<half *>(in_feats.data_ptr<at::Half>()), 
+                reinterpret_cast<half *>(kernel.data_ptr<at::Half>()), 
+                reinterpret_cast<half *>(out_feats.data_ptr<at::Half>()), 
+                in_map_ptr, out_map_ptr
+              );
+          }
+          else{
+            _fgms_fusion_fp16_v2<32, 2, 4, 8, 16, 16, 16, 8, 2, 1>
               <<<dim3(DIV_UP(out_channel, 32), DIV_UP(sum_nnz, 256), 1), dim3(4, 128, 1)>>>(
                 kpos.data_ptr<int>(), qkpos.data_ptr<int>(), k_vol, in_channel, out_channel, 
                 reinterpret_cast<half *>(in_feats.data_ptr<at::Half>()), 
                 reinterpret_cast<half *>(kernel.data_ptr<at::Half>()), 
                 reinterpret_cast<half *>(out_feats.data_ptr<at::Half>()), 
                 in_map_ptr, out_map_ptr
-          );
+            );
+          }   
         }
         else{
           _fgms_fusion_fp16_tc4<32, 4, 8, 16, 16, 16, 4, 2, 2>
@@ -451,7 +483,8 @@ void ConvolutionBackward(const at::Tensor out_feats_grad,
     //           reinterpret_cast<half *>(kernel_grad.data_ptr<at::Half>()),
     //           in_map_ptr, out_map_ptr
     //     );
-    _fgms_fusion_fp16_I_transpose_v5<32, 128, 2, 8, 16, 16, 16, 2, 2, 4>
+    if (in_channel % 8 == 0){
+      _fgms_fusion_fp16_I_transpose_v5<32, 128, 2, 8, 16, 16, 16, 2, 2, 4>
            <<<dim3(DIV_UP(sum_nnz, 256)), dim3(4, 128, 1)>>>(
              kpos_ptr, qkpos_ptr, k_vol, in_channel, out_channel, 
               reinterpret_cast<half *>(in_feats.data_ptr<at::Half>()), 
@@ -459,6 +492,27 @@ void ConvolutionBackward(const at::Tensor out_feats_grad,
               reinterpret_cast<half *>(kernel_grad.data_ptr<at::Half>()),
               in_map_ptr, out_map_ptr
         );
+    }
+    else if (in_channel % 4 == 0){
+      _fgms_fusion_fp16_I_transpose_v5_4x<32, 128, 2, 8, 16, 16, 16, 2, 2, 4>
+           <<<dim3(DIV_UP(sum_nnz, 256)), dim3(4, 128, 1)>>>(
+             kpos_ptr, qkpos_ptr, k_vol, in_channel, out_channel, 
+              reinterpret_cast<half *>(in_feats.data_ptr<at::Half>()), 
+              reinterpret_cast<half *>(out_feats_grad.data_ptr<at::Half>()),
+              reinterpret_cast<half *>(kernel_grad.data_ptr<at::Half>()),
+              in_map_ptr, out_map_ptr
+        );
+    }
+    else {
+      _fgms_fusion_fp16_I_transpose_v5_2x<32, 128, 2, 8, 16, 16, 16, 2, 2, 4>
+           <<<dim3(DIV_UP(sum_nnz, 256)), dim3(4, 128, 1)>>>(
+             kpos_ptr, qkpos_ptr, k_vol, in_channel, out_channel, 
+              reinterpret_cast<half *>(in_feats.data_ptr<at::Half>()), 
+              reinterpret_cast<half *>(out_feats_grad.data_ptr<at::Half>()),
+              reinterpret_cast<half *>(kernel_grad.data_ptr<at::Half>()),
+              in_map_ptr, out_map_ptr
+        );
+    }
   }
   else{
     // {\delta{out_feats}} X W^T = {\delta{in_feats}}
