@@ -160,7 +160,7 @@ __global__ void _fgms_fusion_fp16_W_transpose(
                 half *in_f_grad,
                 const int *imap, 
                 const int *omap) {
-#if __CUDA_ARCH__ >= 700
+#if __CUDA_ARCH__ >= 750
   // Block index
   const int bx = blockIdx.x;
   const int by = blockIdx.y;
@@ -291,7 +291,7 @@ __global__ void _fgms_fusion_fp16_W_transpose_v2(
                 half *in_f_grad,
                 const int *imap, 
                 const int *omap) {
-#if __CUDA_ARCH__ >= 700
+#if __CUDA_ARCH__ >= 750
   // Block index
   const int bx = blockIdx.x;
   const int by = blockIdx.y;
@@ -397,7 +397,7 @@ __global__ void _fgms_fusion_fp16_W_transpose_v2(
     int out_row = y_temp < __ldg(&kpos[widx + 1]) ? omap[y_temp] : -1;
     if (out_row > -1 && cx < c_in){
 #pragma unroll
-      for (int _c = 0; _c + cx < c_in; _c += 2){
+      for (int _c = 0; _c < min(c_in - cx, 8); _c += 2){
       // for (int _c = 0; _c < 8; _c += 2){
         atomicAdd(((half2*)(&in_f_grad[c_in * out_row + cx + _c])), 
           *((half2*)(&As[n][ty][ctx_a + _c])));
